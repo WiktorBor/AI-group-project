@@ -17,5 +17,6 @@ Going to that branch: git checkout <branchname>
 Work on your thing
 
 We are going to be using a virtual environment the second you are at terminal in your branch start the virtual environment, and pip install requirements.txt
+Creating Virtual Environment: python -m venv
 Starting Virtual environment: Put this in terminal- .\venv\Scripts\Activate.ps1
 Then pip install requirements.txt

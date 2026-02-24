@@ -1,0 +1,31 @@
+# Learning materials and examples
+learning/
+
+# Tutorial work (users modify these)
+tutorial/
+
+# Python virtual environment
+venv/
+env/
+*.pyc
+__pycache__/
+
+# IDE settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Deprecated/old files
+src/
+old_*.py
+
+START_HERE.md
+TEAM_ASSIGNMENTS.md
+README.md
+
+
+docs/
+learning/

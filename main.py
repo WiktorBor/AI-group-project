@@ -8,19 +8,17 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from gdpc import Editor, interface
 from generators.settlement_generator import SettlementGenerator
-from world_analysis import WorldAnalyser
 from utils.http_client import GDMCClient
 
 
 def main():
+    
     parser = argparse.ArgumentParser(
         description='Analyse world and Generate Minecraft settlements')
     parser.add_argument('--buildings',type=int, default=3,
                        help='Number of buildings to generate (default: 3)')
     parser.add_argument('--visualize', action='store_true',
                        help='Show debug visualizations in Minecraft')
-    
-    args = parser.parse_args()
     
     print("\n" + "="*60)
     print("GDMC WORLD ANALYSIS AND SETTLEMENT GENERATOR")
@@ -39,33 +37,17 @@ def main():
     
     print("\n Connection OK. Starting analysis")
 
-    analyser = WorldAnalyser(client)
-    analyser.fetch_build_area()
-    analyser.fetch_heightmaps()
-    analyser.fetch_surface_blocks()
-    analyser.fetch_biomes()
-    analyser.build_water_mask()
-
-    scores = analyser.analyse()
-
-    x1, y1, z1, x2, y2, z2 = analyser.get_best_location(scores)
-
-    print(f"\n Build area: From ({x1}, {y1}, {z1}) to ({x2}, {y2}, {z2})")
-
     # Generate settlement
     print("\n Starting settlement generation...")
 
     try:
         editor = Editor(buffering=True)
         generator = SettlementGenerator(
-            editor 
+            editor, client
         )  
-        generator.set_build_area((x1, y1, z1, x2, y2, z2))
-       
+
         generator.generate(
-            num_buildings=args.buildings, 
-            visualize=args.visualize
-        )
+            num_buildings=3)
         
     except KeyboardInterrupt:
         print("\n\n⚠ Generation cancelled by user")

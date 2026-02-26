@@ -1,21 +1,42 @@
 from utils.http_client import GDMCClient
 from world.build_area import BuildArea
+from scipy.ndimage import distance_transform_edt
 import numpy as np
 
 class WorldAnalyser:
+    """
+    Analyse a Minecraft world build area and compute the best location
+    for building based on terrain, water, flatness and biome.
+    Only 'prepare()' should be called from outside, which runs the full analysis and sets 'best_area'.
+    """
     def __init__(self, client: GDMCClient):
         self.client = client
         self.build_area: BuildArea | None = None
+        self.best_area: BuildArea | None = None
         self.heightmap = None
         self.heightmap_surface = None
         self.heightmap_ground = None
+        self.slope_map = None
         self.plant_thickness = None
         self.surface_blocks = {}
         self.water_mask = None
+        self.water_distances = None
         self.biomes = None
+        self.scores = None
 
+    # Public Interface
+    def prepare(self, rect = 200, stride = 20):
+        """Main methods to prepare analysis and find best building area."""
+        self._fetch_build_area()
+        self._fetch_heightmaps()
+        self._fetch_surface_blocks()
+        self._fetch_biomes()
+        self._build_water_mask()
+        self._get_best_location(rect, stride)
+        self.compute_slope_map()
+    
     # HTTP FETCH FUNCTIONS
-    def fetch_build_area(self):
+    def _fetch_build_area(self):
         data = self.client.get("/buildarea")
 
         self.build_area = BuildArea(
@@ -27,7 +48,7 @@ class WorldAnalyser:
             z_to = data["zTo"],
         )
     
-    def fetch_heightmaps(self):
+    def _fetch_heightmaps(self):
         params={
             "x": self.build_area.x_from,
             "z": self.build_area.z_from,
@@ -52,7 +73,7 @@ class WorldAnalyser:
             self.heightmap_surface - self.heightmap_ground)
         self.heightmap = self.heightmap_ground
 
-    def fetch_surface_blocks(self, depth=20):
+    def _fetch_surface_blocks(self, depth=20):
         Chunk = 16
 
         for x in range(0, self.build_area.width, Chunk):
@@ -96,7 +117,7 @@ class WorldAnalyser:
                             self.surface_blocks[key] = (block["y"], block_id)
                             break
 
-    def fetch_biomes(self):
+    def _fetch_biomes(self):
         data = self.client.get("/biomes", params={
                 "x": self.build_area.x_from,
                 "z": self.build_area.z_from,
@@ -120,12 +141,12 @@ class WorldAnalyser:
 
         self.biomes = arr
 
-    # ANALYSIS FUNCTIONS
-    def compute_forest_penalty(self, x, z):
+    # Helper functions for scoring
+    def _compute_forest_penalty(self, x, z):
         thickness = self.plant_thickness[x][z]
-        return min(thickness / 5.0, 1.0)
+        return min(max(thickness, 0) / 5.0, 1.0)
 
-    def compute_flatness(self, x, z, radius=5):
+    def _compute_flatness(self, x, z, radius=5):
         x_min = max(0, x - radius)
         x_max = min(self.build_area.width, x + radius + 1)
         z_min = max(0, z - radius)
@@ -136,62 +157,49 @@ class WorldAnalyser:
         std = np.std(area)
         return 1 / (1 + std)
 
-    def compute_accessibility(self, x, z):
-        center_height = self.heightmap[x][z]
+    def _compute_accessibility(self, x, z):
+        center_height = self.heightmap[x, z]
         walkable = 0
 
         for dx, dz in [(-1,0), (1,0),(0,-1),(0,1)]:
             nx, nz = x + dx, z + dz
             if 0 <= nx < self.build_area.width and 0 <= nz < self.build_area.depth:
-                if abs(center_height - self.heightmap[nx][nz]) <= 1:
+                if abs(center_height - self.heightmap[nx, nz]) <= 1:
                     walkable += 1
 
         return walkable / 4
+    
+    def compute_slope_map(self):
+        gx, gz = np.gradient(self.heightmap)
+        self.slope_map = np.sqrt(gx**2 + gz**2)
 
-    def build_water_mask(self):
+    def _build_water_mask(self):
         self.water_mask = np.zeros((self.build_area.width, self.build_area.depth), dtype=bool)
 
         for (x, z), (_, block_id) in self.surface_blocks.items():
             if "water" in block_id:
                 self.water_mask[x][z] = True
+        self.water_distances = distance_transform_edt(~self.water_mask)
 
-    def compute_water_proximity(self, x, z, max_scan=16):
-        if self.water_mask[x][z]:
-            return -5
-        
-        best_distance = max_scan
+    def _compute_water_proximity(self, x, z, max_scan=16):
+        return (max_scan - min(self.water_distances[x, z], max_scan)) / max_scan
 
-        for dx in range(-max_scan, max_scan + 1):
-            for dz in range(-max_scan, max_scan + 1):
-                nx = x + dx
-                nz = z + dz
+    def _compute_elevation(self, x, z):
+        return self.heightmap[x, z]
 
-                if 0 <= nx < self.build_area.width and 0 <= nz < self.build_area.depth:
-                    if self.water_mask[nx, nz]:
-                        distance = abs(dx) + abs(dz)
-                        best_distance = min(best_distance, distance)
-
-        if best_distance == max_scan:
-            return 0
-        
-        return (max_scan - best_distance) / max_scan
-
-    def compute_elevation(self, x, z):
-        return self.heightmap[x][z]
-
-    def compute_expansion(self, x, z, radius=5):
+    def _compute_expansion(self, x, z, radius=5):
         x_min = max(0, x - radius)
         x_max = min(self.build_area.width, x + radius + 1)
         z_min = max(0, z - radius)
         z_max = min(self.build_area.depth, z + radius + 1)
 
         area = self.heightmap[x_min:x_max, z_min:z_max]
-        base_height = self.heightmap[x][z]
+        base_height = self.heightmap[x, z]
 
         flat = np.abs(area - base_height) <= 1
         return np.sum(flat) / flat.size
 
-    def compute_biome_score(self, x, z):
+    def _compute_biome_score(self, x, z):
         biome = self.biomes[x, z]
 
         biome_weights = {
@@ -206,21 +214,24 @@ class WorldAnalyser:
         return biome_weights.get(biome, 0.5)
 
     # WORLD ANALYSER
-
-    def analyse(self):
+    def _analyse(self):
+        if self.build_area is None:
+            raise ValueError("Build area not fetched. Call fetch_build_area() first.")
+        
+        """Compute scores for all positions in the build area."""
         scores = np.zeros((self.build_area.width, self.build_area.depth))
         max_height = np.max(self.heightmap)
 
         for x in range(self.build_area.width):
             for z in range(self.build_area.depth):
 
-                flatness = self.compute_flatness(x, z)
-                access = self.compute_accessibility(x, z)
-                water = self.compute_water_proximity(x, z)
-                elevation = self.compute_elevation(x, z) / max_height
-                expansion = self.compute_expansion(x, z)
-                biome = self.compute_biome_score(x, z)
-                forest_penalty = self.compute_forest_penalty(x, z)
+                flatness = self._compute_flatness(x, z)
+                access = self._compute_accessibility(x, z)
+                water = self._compute_water_proximity(x, z)
+                elevation = self._compute_elevation(x, z) / max_height
+                expansion = self._compute_expansion(x, z)
+                biome = self._compute_biome_score(x, z)
+                forest_penalty = self._compute_forest_penalty(x, z)
 
                 final_score = (
                     1.5 * flatness +
@@ -234,16 +245,21 @@ class WorldAnalyser:
 
                 scores[x, z] = final_score
 
-        return scores
+        self.scores = scores
 
     # GET BEST LOCATION
-    def get_best_location(self, scores, rect_size=200, stride=10):
+    def _get_best_location(self, rect_size, stride):
+        """Find the best rectangular area in the build area."""
+        self._analyse()
         width = self.build_area.width
         depth = self.build_area.depth
 
         # Ensure the rectangle fits inside the build area
         rect_size = min(rect_size, width, depth)
         if rect_size <= 0:
+            return None
+        
+        if rect_size < stride:
             return None
 
         best_score = -np.inf
@@ -253,7 +269,7 @@ class WorldAnalyser:
         for x in range(0, width - rect_size + 1, stride):
             for z in range(0, depth - rect_size + 1, stride):
 
-                area = scores[x:x + rect_size, z:z + rect_size]
+                area = self.scores[x:x + rect_size, z:z + rect_size]
                 avg_score = np.mean(area)
 
                 if avg_score > best_score:
@@ -278,4 +294,4 @@ class WorldAnalyser:
         min_y = int(np.min(area_heights))
         max_y = int(np.max(area_heights))
 
-        return x_from, min_y, z_from, x_to, max_y, z_to
+        self.best_area = BuildArea(x_from, min_y, z_from, x_to, max_y, z_to)

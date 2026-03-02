@@ -33,12 +33,6 @@ def main():
         print("\n Could not connect to GDMC HTTP Interface.\nIs Minecraft running?")
         sys.exit(1)
     
-    if not client.check_build_area():
-        print("\n No build area set. Set it in-game first, e.g.:")
-        print("   /buildarea set ~ ~ ~ ~199 ~ ~199   (200x200 from your position)")
-        print("   Or: /buildarea set x1 y1 z1 x2 y2 z2")
-        sys.exit(1)
-    
     print("\n Connection OK. Using your current build area.")
 
     # Generate settlement

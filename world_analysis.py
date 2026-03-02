@@ -1,12 +1,13 @@
 from utils.http_client import GDMCClient
 from world.build_area import BuildArea
-from scipy.ndimage import distance_transform_edt
+from scipy.ndimage import distance_transform_edt, label, find_objects
 import numpy as np
 
 class WorldAnalyser:
     """
     Analyse a Minecraft world build area and compute the best location
-    for building based on terrain, water, flatness and biome.
+    for building a settlement based on terrain, water, flatness and biome.
+    The best area is dinamically sized to fit the largest high-scoring patch.
     Only 'prepare()' should be called from outside, which runs the full analysis and sets 'best_area'.
     """
     def __init__(self, client: GDMCClient):
@@ -25,33 +26,43 @@ class WorldAnalyser:
         self.scores = None
 
     # Public Interface
-    def prepare(self, rect = 200, stride = 20):
+    def prepare(self):
         """Main methods to prepare analysis and find best building area."""
         self._fetch_build_area()
         self._fetch_heightmaps()
         self._fetch_surface_blocks()
         self._fetch_biomes()
         self._build_water_mask()
-        self._get_best_location(rect, stride)
         self.compute_slope_map()
+        self._get_best_location()
     
     # HTTP FETCH FUNCTIONS
     def _fetch_build_area(self):
         """
-        Use the build area already set in-game (e.g. via /buildarea set).
-        Does not modify the build area; set it yourself before running.
+        Determine build area around the first player, 
+        fallback to server build area if needed.
         """
-        data = self.client.get("/buildarea")
-        self.build_area = BuildArea(
-            x_from=data["xFrom"],
-            y_from=data["yFrom"],
-            z_from=data["zFrom"],
-            x_to=data["xTo"],
-            y_to=data["yTo"],
-            z_to=data["zTo"],
-        )
+        if not self.client.check_build_area():
+            print("\n No build area set. Set it in-game first, e.g.:")
+            print("   /buildarea set ~ ~ ~ ~199 ~ ~199   (200x200 from your position)")
+            print("   Or: /buildarea set x1 y1 z1 x2 y2 z2")
+            raise SystemExit(1)
 
+        data = self.client.get("/buildarea")
+
+        self.build_area = BuildArea(
+            x_from = data["xFrom"],
+            y_from = data["yFrom"],
+            z_from = data["zFrom"],
+            x_to = data["xTo"],
+            y_to = data["yTo"],
+            z_to = data["zTo"],
+        )
+   
     def _fetch_heightmaps(self):
+        """
+        Fetch heightmaps for the full build area in chunks.
+        """
         params={
             "x": self.build_area.x_from,
             "z": self.build_area.z_from,
@@ -59,23 +70,23 @@ class WorldAnalyser:
             "depth": self.build_area.depth,
             }
         
-                # Fetch surface
+        # Fetch surface
         surface = self.client.get("/heightmap", {
             **params,
             "type": "MOTION_BLOCKING"
         })
+
+        self.heightmap_surface = np.array(surface)
 
         # Fetch ground
         ground = self.client.get("/heightmap", {
             **params,
             "type": "MOTION_BLOCKING_NO_PLANTS"
         })
-    
-        self.heightmap_surface = np.array(surface)
         self.heightmap_ground = np.array(ground)
 
-        self.plant_thickness = (
-            self.heightmap_surface - self.heightmap_ground)
+        # Compute plant thickness and final heightmap
+        self.plant_thickness = self.heightmap_surface - self.heightmap_ground
         self.heightmap = self.heightmap_ground
 
     def _fetch_surface_blocks(self, depth=20, Chunk = 32):
@@ -274,51 +285,38 @@ class WorldAnalyser:
         self.scores = scores
 
     # GET BEST LOCATION
-    def _get_best_location(self, rect_size, stride):
-        """Find the best rectangular area in the build area."""
+    def _get_best_location(self):
+        """
+        Pick the larges contiguous high-scoring patch of terrain.
+        Iteratively lower the threshold if patch too small.
+        """
         self._analyse()
-        # Use scores (and heightmap) dimensions to avoid index errors
-        width = self.scores.shape[0]
-        depth = self.scores.shape[1]
+        flat_mask = self.slope_map <= 0.5
+        threshold = np.percentile(self.scores, 75)
+        high_score_mask = self.scores >= threshold
+        mask = flat_mask & high_score_mask
 
-        # Ensure the rectangle fits inside the build area
-        rect_size = min(rect_size, width, depth)
-        if rect_size <= 0:
-            return None
+        labeled, num_features = label(mask)
+        best_total_score = -np.inf
+        best_zone = None
         
-        if rect_size < stride:
-            return None
+        for i in range(1, num_features + 1): 
+            coords = np.argwhere(labeled == i) 
+            total_score = self.scores[labeled == i].sum() 
+            if total_score > best_total_score: 
+                best_total_score = total_score 
+                best_zone = coords
+        
+        x_min, z_min = best_zone.min(axis=0)
+        x_max, z_max = best_zone.max(axis=0)
+        y_min = int(np.min(self.heightmap[x_min:x_max+1, z_min:z_max+1]))
+        y_max = int(np.max(self.heightmap[x_min:x_max+1, z_min:z_max+1]))
 
-        best_score = -np.inf
-        best_rect = None
-
-        # Allow using the full area (inclusive upper bound)
-        for x in range(0, width - rect_size + 1, stride):
-            for z in range(0, depth - rect_size + 1, stride):
-
-                area = self.scores[x:x + rect_size, z:z + rect_size]
-                avg_score = np.mean(area)
-
-                if avg_score > best_score:
-                    best_score = avg_score
-                    best_rect = (x, z)
-
-        if best_rect is None:
-            return None
-
-        x_idx, z_idx = best_rect
-
-        x_from = x_idx + self.build_area.x_from
-        z_from = z_idx + self.build_area.z_from
-        x_to = x_from + rect_size - 1
-        z_to = z_from + rect_size - 1
-
-        area_heights = self.heightmap[
-            x_idx:x_idx+rect_size,
-            z_idx:z_idx+rect_size
-        ]
-
-        min_y = int(np.min(area_heights))
-        max_y = int(np.max(area_heights))
-
-        self.best_area = BuildArea(x_from, min_y, z_from, x_to, max_y, z_to)
+        self.best_area = BuildArea(
+            x_min + self.build_area.x_from,
+            y_min,
+            z_min + self.build_area.z_from,
+            x_max + self.build_area.x_from,
+            y_max,
+            z_max + self.build_area.z_from
+        )

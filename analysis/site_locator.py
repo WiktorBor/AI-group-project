@@ -94,7 +94,7 @@ class SiteLocator:
 
                 flatness_score = max(0, 1 - mean_slope / 2)
                 level_score = max(0, 1 - height_range / 3)
-                water_proximity = self.world._compute_water_proximity(gx, gz)
+                water_proximity = self.world.water_proximity[gx, gz]
                 area_score = flatness_score * 0.5 + level_score * 0.3 + water_proximity * 0.2
                 
                 if area_score > 0.4:
@@ -152,7 +152,7 @@ class SiteLocator:
             i, j, score, world_x, world_z = best
             gx = offset_x + i
             gz = offset_z + j
-            base_height = int(global_heightmap[gx, gz])
+            base_height = int(global_heightmap[gx:gx+width, gz:gz+depth].mean())
             
             site = {
                 'x': world_x,

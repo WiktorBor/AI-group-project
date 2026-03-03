@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from gdpc import Editor, interface
+from gdpc import Editor
 from generators.settlement_generator import SettlementGenerator
 from utils.http_client import GDMCClient
 

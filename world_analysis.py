@@ -33,7 +33,6 @@ class WorldAnalyser:
         self._fetch_heightmaps()
         self._fetch_surface_blocks()
         self._fetch_biomes()
-        self._build_water_mask()
         self.compute_slope_map()
         self._get_best_location()
     
@@ -236,8 +235,8 @@ class WorldAnalyser:
 
         flatness = self._compute_flatness()
         access = self._compute_accessibility()
+        self._build_water_mask()
         self.water_proximity = (16 - np.minimum(self.water_distances, 16)) / 16
-
         expansion = self._compute_expansion()
         biome = self._compute_biome_score()
         forest_penalty = np.clip(self.plant_thickness / 5.0, 0, 1)

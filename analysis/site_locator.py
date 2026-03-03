@@ -152,7 +152,16 @@ class SiteLocator:
             i, j, score, world_x, world_z = best
             gx = offset_x + i
             gz = offset_z + j
-            base_height = int(global_heightmap[gx:gx+width, gz:gz+depth].mean())
+
+            if self.world.water_mask[gx:gx+width, gz:gz+depth].any():
+                continue
+            if self.world.water_distances[gx:gx+width, gz:gz+depth].min() < 2:
+                continue
+
+            if gx + width > global_heightmap.shape[0] or gz + depth > global_heightmap.shape[1]:
+                continue   
+
+            base_height = int(global_heightmap[gx:gx+width, gz:gz+depth].max())
             
             site = {
                 'x': world_x,

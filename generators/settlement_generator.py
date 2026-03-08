@@ -1,8 +1,8 @@
 """Main orchestrator for settlement generation."""
-from analysis.site_locator import SiteLocator
-from world_analysis import WorldAnalyser
-from world.build_area import BuildArea
-from structures.house_builder import HouseBuilder
+from planning.site_locator import SiteLocator
+from data.analysis.world_analysis import WorldAnalyser
+from structures.registry import STRUCTURES
+from structures.house.house_builder import HouseBuilder
 
 
 class SettlementGenerator:
@@ -62,12 +62,19 @@ class SettlementGenerator:
 
     def _generate_buildings(self, analysis, sites):
         print("\n[Phase 3] Building Generation")
-        house_builder = HouseBuilder(self.editor, analysis)
         
         for idx, site in enumerate(sites, 1):
-            print(f"  Building {idx}/{len(sites)} at {site}")
-            building_data = house_builder.build(site)
-            self.buildings.append(building_data)
+            structure_type = "house"
+            structure_class = STRUCTURES[structure_type]
+
+            structure = structure_class(self.editor, analysis)
+            print(f"  Building {idx}/{len(sites)} at {site} ({structure_type})")
+
+            structure.build(site["area"])
+            self.buildings.append({
+                "type": structure_type,
+                "site": site
+            })
         
         print(f"  ✓ Generated {len(self.buildings)} buildings")
     

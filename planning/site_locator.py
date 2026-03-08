@@ -2,15 +2,15 @@
 
 import numpy as np
 from gdpc import Block
+from data.build_area import BuildArea
 
-def _center_distance(ax, az, aw, ad, bx, bz, bw, bd):
+def _center_distance(area_a: BuildArea, area_b: BuildArea):
     """Rough center-to-center distance between two building footprints."""
-    acx = ax + aw / 2
-    acz = az + ad / 2
-    bcx = bx + bw / 2
-    bcz = bz + bd / 2
-    return np.sqrt((acx - bcx) ** 2 + (acz - bcz) ** 2)
-
+    acx = (area_a.x_from + area_a.x_to) / 2
+    acz = (area_a.z_from + area_a.z_to) / 2
+    bcx = (area_b.x_from + area_b.x_to) / 2
+    bcz = (area_b.z_from + area_b.z_to) / 2
+    return np.sqrt((acx - bcx)**2 + (acz - bcz)**2)
 
 class SiteLocator:
     
@@ -20,7 +20,7 @@ class SiteLocator:
         Editor: GDPC Editor
         """
         self.world = world
-        self.settlement_area = world.best_area
+        self.settlement_area: BuildArea = world.best_area
         self.editor = editor
         self.sites = []
     
@@ -28,6 +28,7 @@ class SiteLocator:
         self,
         max_sites=5,
         building_size=(7, 7),
+        building_height=10,
         min_gap=5,
         min_building_dist=10,
         max_building_dist=28,
@@ -52,6 +53,7 @@ class SiteLocator:
         print("\n=== SITE LOCATION (village spacing) ===")
         print(f"  Sites: {max_sites}, size: {building_size[0]}x{building_size[1]}, gap: {min_gap}, cluster: {min_building_dist}-{max_building_dist}m")
         print("Best area:", self.settlement_area)
+
         width, depth = building_size
         margin = max(3, min_gap)
 
@@ -61,6 +63,7 @@ class SiteLocator:
         global_water_distances = self.world.water_distances
         global_water_proximity = self.world.water_proximity
         global_area = self.world.build_area
+
         offset_x = self.settlement_area.x_from - global_area.x_from
         offset_z = self.settlement_area.z_from - global_area.z_from
 
@@ -140,14 +143,21 @@ class SiteLocator:
 
                 world_x = self.settlement_area.x_from + i
                 world_z = self.settlement_area.z_from + j
+                base_height = int(global_heightmap[world_x - global_area.x_from : world_x - global_area.x_from + width,
+                                                 world_z - global_area.z_from : world_z - global_area.z_from + depth].max())
+                
+                candidate_area = BuildArea(
+                    x_from=world_x,
+                    y_from=base_height,
+                    z_from=world_z,
+                    x_to=world_x + width - 1,
+                    y_to=base_height + building_height - 1,
+                    z_to=world_z + depth - 1)
 
                 ctr_dist_to_placed = float('inf')
                 if sites:
                     for s in sites:
-                        d = _center_distance(
-                            world_x, world_z, width, depth,
-                            s['x'], s['z'], s['width'], s['depth'],
-                        )
+                        d = _center_distance(candidate_area, s['area'])                       
                         ctr_dist_to_placed = min(ctr_dist_to_placed, d)
 
                     if ctr_dist_to_placed < min_building_dist:
@@ -162,43 +172,36 @@ class SiteLocator:
                 if (in_cluster, c['score']) > (best_cluster_score, best_score):
                     best_cluster_score = in_cluster
                     best_score = c['score']
-                    best = (i, j, c['score'], world_x, world_z)
+                    best = candidate_area, c["score"]
 
             if best is None:
                 break
 
-            i, j, score, world_x, world_z = best
+            area, score = best
+            sites.append({
+                "area": area,
+                "score": score
+            })
 
-            gx = offset_x + i
-            gz = offset_z + j
+            i_off = area.x_from - self.settlement_area.x_from
+            j_off = area.z_from - self.settlement_area.z_from
 
-            base_height = int(global_heightmap[gx:gx+width, gz:gz+depth].max())
-
-            site = {
-                'x': world_x,
-                'z': world_z,
-                'height': base_height,
-                'width': width,
-                'depth': depth,
-                'score': score,
-            }
-
-            sites.append(site)
             occupied[
-                max(0, i - block_radius) : min(area_width, i + width + block_radius),
-                max(0, j - block_radius) : min(area_depth, j + depth + block_radius),
+                max(0, i_off - block_radius) : min(area_width, i_off + width + block_radius),
+                max(0, j_off - block_radius) : min(area_depth, j_off + depth + block_radius),
             ] = True
 
             # Remove this candidate so we don't reconsider it
             candidates = [
                 c for c in candidates 
-                if (c['local_x'], c['local_z']) != (i, j)
+                if (c['local_x'], c['local_z']) != (i_off, j_off)
             ]
         
         self.sites = sites
         print(f"  ✓ Found {len(sites)} sites")
         for idx, site in enumerate(sites, 1):
-            print(f"    Site {idx}: ({site['x']}, {site['z']}) score={site['score']:.2f}")
+            a = site['area']
+            print(f"    Site {idx}: ({a.x_from}, {a.z_from}) score={site['score']:.2f}")
 
         return sites
 
@@ -206,8 +209,10 @@ class SiteLocator:
         print("\n  Placing site markers...")
         
         for site in self.sites:
-            x, z = site['x'], site['z']
-            y = site['height']
+            area: BuildArea = site['area']
+            x = (area.x_from + area.x_to) // 2
+            z = (area.z_from + area.z_to) // 2
+            y = area.y_from
             
             self.editor.placeBlock((x, y - 1, z), Block('minecraft:gold_block'))
             self.editor.placeBlock((x, y, z), Block('minecraft:beacon'))

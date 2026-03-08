@@ -1,7 +1,7 @@
 import math
 from gdpc import Block
 
-def clear_area(editor, world, building_area, buffer=3):
+def clear_area(editor, analysis, building_area, buffer=3):
 
     center_x = (building_area.x_from + building_area.x_to) // 2
     center_z = (building_area.z_from + building_area.z_to) // 2
@@ -19,11 +19,11 @@ def clear_area(editor, world, building_area, buffer=3):
             if distance > radius:
                 continue
 
-            gx = x - world.build_area.x_from
-            gz = z - world.build_area.z_from
+            gx = x - analysis.build_area.x_from
+            gz = z - analysis.build_area.z_from
 
-            ground = int(world.heightmap_ground[gx, gz])
-            surface = int(world.heightmap_surface[gx, gz])
+            ground = int(analysis.heightmap_ground[gx, gz])
+            surface = int(analysis.heightmap_surface[gx, gz])
 
             for y in range(ground, surface + 1):
                 block = editor.getBlock((x, y, z))

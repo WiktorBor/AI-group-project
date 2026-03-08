@@ -12,17 +12,11 @@ try:
     from generators.settlement_generator import SettlementGenerator
     print("  OK generators.settlement_generator")
     
-    from structures.house_builder import HouseBuilder
+    from structures.house.house_builder import HouseBuilder
     print("  OK structures.house_builder")
     
-    from analysis.terrain_analyzer import TerrainAnalyzer
-    print("  OK analysis.terrain_analyzer")
-    
-    from analysis.site_locator import SiteLocator
+    from planning.site_locator import SiteLocator
     print("  OK analysis.site_locator")
-    
-    from utils.heightmap import create_heightmap
-    print("  OK utils.heightmap")
     
     from utils.block_utils import get_biome_palette
     print("  OK utils.block_utils")

@@ -1,6 +1,6 @@
 from utils.http_client import GDMCClient
-from world.build_area import BuildArea
-from world.analysis_results import WorldAnalysisResult
+from data.build_area import BuildArea
+from data.analysis_results import WorldAnalysisResult
 from scipy.ndimage import distance_transform_edt, label, uniform_filter
 import numpy as np
 
